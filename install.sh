@@ -131,6 +131,9 @@ else
 	echo "Indiquez la version que vous souhaitez installer :"
 	read netbox_ver
 	echo "Vous avez choisis d'installer la version v$netbox_ver de Netbox."
+	wget https://github.com/netbox-community/netbox/archive/refs/tags/v$netbox_ver.tar.gz
+	tar -xzf v$netbox_ver.tar.gz -C /opt
+	ln -s /opt/netbox-$netbox_ver/ /opt/netbox
 fi
 
 # Création de l'utilisateur Netbox système
