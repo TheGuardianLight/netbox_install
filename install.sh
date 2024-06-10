@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 # Vérifie si le script est lancé avec les permissions administrateurs
 echo "Vérification des permissions administrateurs..."
@@ -31,7 +31,7 @@ else
   exit 1
 fi
 
-if [$major_version -ge 15]; then
+if [ $major_version -ge 15 ]; then
 	echo "Version de PostgreSQL non supporté par ce script. Version maximale accepté : 14"
 	exit 1
 fi
@@ -64,25 +64,10 @@ fi
 echo "Installation de redis-server"
 apt install -y redis-server
 
-# Obtenir la version de Redis
-echo "Vérification de la version de redis-server..."
-redis_version=$(redis-server -v | awk '{print $2}')
-
-# Extraire le numéro de version principal
-major_redis_version=${redis_version%%.*}
-
-# Vérifier si la version principale est supérieure ou égale à 4
-if [ $major_redis_version -ge 4 ]; then
-  echo "Version de Redis requise respectée : $redis_version"
-else
-  echo "Erreur : Version de Redis trop ancienne. Version minimale requise : 4.0. Version trouvée : $redis_version"
-  exit 1
-fi
-
 # Vérifie la connexion de redis-server
 redis_response=$(redis-cli ping)
 
-if [ "$redis_response" == "PONG" ]; then
+if [ "$redis_response" = "PONG" ]; then
   echo "Connexion Redis établie avec succès."
 else
   echo "Erreur : Connexion Redis impossible. Réponse : $redis_response"
@@ -91,7 +76,7 @@ fi
 
 # Installation de Netbox
 echo "Installation de Netbox"
-apt install -y python3 python3-pip python3-venv python3-dev build-essential libxml2-dev libxslt1-dev libffi-dev libpq-dev libssl-dev zlib1g-dev
+apt install -y python3 python3-pip python3-venv python3-dev build-essential libxml2-dev libxslt1-dev libffi-dev libpq-dev libssl-dev zlib1g-dev jq
 
 # Check Python version
 python_version=$(python3 -V | awk '{print $2}')
@@ -159,13 +144,16 @@ sudo chown --recursive netbox /opt/netbox/netbox/scripts/
 echo "Création du fichier de configuration"
 cd /opt/netbox/netbox/netbox/
 sudo cp configuration_example.py configuration.py
-echo "information : Vous allez devoir modifier le fichier de configuration dans 60 secondes. Prenez le temps de noter le secret généré juste en dessous :"
+echo "information : Vous allez devoir modifier le fichier de configuration dans 20 secondes. Prenez le temps de noter le secret généré juste en dessous :"
 python3 ../generate_secret_key.py
-sleep 60
+sleep 20
 vim configuration.py
 
-/opt/netbox/upgrade.sh
+cd /opt/netbox
+./upgrade.sh
 pip install -r requirement.txt
+systemctl restart netbox netbox-rq
+
 
 # Création du super utilisateur
 echo "Création du super utilisateur"
@@ -197,6 +185,8 @@ systemctl enable netbox netbox-rq
 echo ""
 systemctl status netbox.service
 sleep 5
+
+deactivate
 
 # Installation du serveur WEB
 echo "Installation du serveur web..."
@@ -252,7 +242,8 @@ if [ $web_server = "nginx" ]; then
 	  echo "$nginx_config_test"
 	  exit 1
 	fi
-else if [ $web_server = "apache" ]; then
+fi
+if [ $web_server = "apache" ]; then
 	apt install -y apache2
 	cp /opt/netbox/contrib/apache.conf /etc/apache2/sites-available/netbox.conf
 
@@ -281,7 +272,6 @@ else if [ $web_server = "apache" ]; then
 	a2enmod ssl proxy proxy_http headers rewrite
 	a2ensite netbox
 	systemctl restart apache2
-
 fi	
 
 echo "Vous pouvez vérifier la connexion de l'utilisateur de base de donnée avec la commande :"
