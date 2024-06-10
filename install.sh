@@ -1,5 +1,13 @@
 #!/bin/sh
 
+# Vérifie si le script est lancé avec les permissions administrateurs
+echo "Vérification des permissions administrateurs..."
+if [ $EUID -ne 0 ]; then
+    echo "Vous devez lancer ce script avec les permissions administrateurs"
+    exit 1
+    else echo "Vous avez les permissions administrateurs"
+fi
+
 # Vérifie les mises à jours et les installes
 echo "Recherche et mise à jour du système et des paquets"
 apt update && apt upgrade -y
@@ -114,7 +122,167 @@ else
   exit 1
 fi
 
+echo "Souhaitez vous que le script installe la dernière version de Netbox ? (y/n)"
+read install_newver
 
+if [ $install_newver = "y" ]; then
+	repository="netbox-community/netbox"
+
+	# Get the latest release information
+	release_data=$(curl -sSL "https://api.github.com/repos/$repository/releases/latest")
+
+	# Extract the tag name (latest release version)
+	latest_release=$(echo $release_data | jq -r '.tag_name')
+
+	echo "La dernière version de NetBox sur le dépôt GitHub est : $latest_release"
+
+	wget https://github.com/netbox-community/netbox/archive/refs/tags/$latest_release.tar.gz
+	tar -xzf $latest_release.tar.gz -C /opt
+	# Extract the version number without 'v' prefix
+	version_number=${latest_release#v}
+	ln -s /opt/netbox-$version_number/ /opt/netbox
+
+else 
+	echo "Indiquez la version que vous souhaitez installer :"
+	read netbox_ver
+	echo "Vous avez choisis d'installer la version v$netbox_ver de Netbox."
+fi
+
+# Création de l'utilisateur Netbox système
+echo "Création de l'utilisateur système \"netbox\""
+sudo adduser --system --group netbox
+sudo chown --recursive netbox /opt/netbox/netbox/media/
+sudo chown --recursive netbox /opt/netbox/netbox/reports/
+sudo chown --recursive netbox /opt/netbox/netbox/scripts/
+
+# Création du fichier de configuration
+echo "Création du fichier de configuration"
+cd /opt/netbox/netbox/netbox/
+sudo cp configuration_example.py configuration.py
+echo "information : Vous allez devoir modifier le fichier de configuration dans 60 secondes. Prenez le temps de noter le secret généré juste en dessous :"
+python3 ../generate_secret_key.py
+sleep 60
+vim configuration.py
+
+/opt/netbox/upgrade.sh
+pip install -r requirement.txt
+
+# Création du super utilisateur
+echo "Création du super utilisateur"
+source /opt/netbox/venv/bin/activate
+cd /opt/netbox/netbox
+python3 manage.py createsuperuser
+
+ln -s /opt/netbox/contrib/netbox-housekeeping.sh /etc/cron.daily/netbox-housekeeping
+
+# Test de l'environnement de développement
+echo "LANCEMENT DU TEST DE L'ENVIRONNEMENT DE DEVELOPPEMENT !!!"
+sleep 2
+echo "LANCEMENT DU TEST DE L'ENVIRONNEMENT DE DEVELOPPEMENT !!!"
+sleep 2
+echo "LANCEMENT DU TEST DE L'ENVIRONNEMENT DE DEVELOPPEMENT !!!"
+sleep 2
+python3 manage.py runserver 0.0.0.0:8000 --insecure
+
+# Configuration de Gunicorn
+echo "Configuration de Gunicorn"
+cp /opt/netbox/contrib/gunicorn.py /opt/netbox/gunicorn.py
+
+# Configuration de Systemd
+echo "Configuration de Systemd"
+cp -v /opt/netbox/contrib/*.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl start netbox netbox-rq
+systemctl enable netbox netbox-rq
+echo ""
+systemctl status netbox.service
+sleep 5
+
+# Installation du serveur WEB
+echo "Installation du serveur web..."
+echo "Un certificat autosigné va être installé."
+
+sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+-keyout /etc/ssl/private/netbox.key \
+-out /etc/ssl/certs/netbox.crt
+
+echo "Souhaitez vous utiliser un serveur nginx ou apache ? (nginx/apache)"
+read web_server
+
+if [ $web_server = "nginx" ]; then
+	apt install -y nginx
+	cp /opt/netbox/contrib/nginx.conf /etc/nginx/sites-available/netbox
+	rm /etc/nginx/sites-enabled/default
+	ln -s /etc/nginx/sites-available/netbox /etc/nginx/sites-enabled/netbox
+
+
+	# Get the new server name from the user
+	read -p "Enter the new server name (e.g., yourdomain.com): " new_server_name
+
+	# Escape any special characters in the user input (optional, but recommended for security)
+	new_server_name_escaped=$(echo "$new_server_name" | sed 's/[\]\/\*\.&$/\\&/g')
+	echo "Nom de domaine échappé: $new_server_name_escaped"
+
+
+	# Backup the original file (optional, but recommended)
+	cp /etc/nginx/sites-available/netbox /etc/nginx/sites-available/netbox.bak
+
+	# Modify the line using sed
+	sed -i "s/server_name netbox.example.com;/server_name $new_server_name_escaped;/" /etc/nginx/sites-available/netbox
+
+	# Check for errors
+	if [ $? -eq 0 ]; then
+	  echo "Configuration file modified successfully."
+	else
+	  echo "Error: Failed to modify the configuration file."
+	  # Restore the backup if modification failed (optional)
+	  # cp /etc/nginx/sites-available/netbox.bak /etc/nginx/sites-available/netbox
+	fi
+
+	# Vérifier la configuration Nginx
+	nginx_config_test=$(nginx -t 2>&1)
+
+	# Vérifier le code de retour de la commande
+	if [ $? -eq 0 ]; then
+	  echo "La configuration Nginx est valide."
+	  systemctl restart nginx
+	else
+	  echo "La configuration Nginx est invalide."
+	  echo "Détails de l'erreur :"
+	  echo "$nginx_config_test"
+	  exit 1
+	fi
+else if [ $web_server = "apache" ]; then
+	apt install -y apache2
+	cp /opt/netbox/contrib/apache.conf /etc/apache2/sites-available/netbox.conf
+
+	# Get the new server name from the user
+	read -p "Enter the new server name (e.g., yourdomain.com): " new_server_name
+
+	# Escape any special characters in the user input (optional, but recommended for security)
+	new_server_name_escaped=$(echo "$new_server_name" | sed 's/[\]\/\*\.&$/\\&/g')
+	echo "Nom de domaine échappé: $new_server_name_escaped"
+
+	# Backup the original file (optional, but recommended)
+	cp /etc/apache2/sites-available/netbox.conf /etc/apache2/sites-available/netbox.conf.bak
+
+	# Modify the line using sed
+	sed -i "s/ServerName netbox.example.com;/ServerName $new_server_name_escaped;/" /etc/nginx/sites-available/netbox
+
+	# Check for errors
+	if [ $? -eq 0 ]; then
+	  echo "Configuration file modified successfully."
+	else
+	  echo "Error: Failed to modify the configuration file."
+	  # Restore the backup if modification failed (optional)
+	  cp /etc/apache2/sites-available/netbox.conf.bak /etc/apache2/sites-available/netbox.conf
+	fi
+
+	a2enmod ssl proxy proxy_http headers rewrite
+	a2ensite netbox
+	systemctl restart apache2
+
+fi	
 
 echo "Vous pouvez vérifier la connexion de l'utilisateur de base de donnée avec la commande :"
 echo "\"sudo -u postgres psql --username netbox --password --host localhost netbox\""
