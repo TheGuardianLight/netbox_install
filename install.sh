@@ -155,8 +155,6 @@ vim configuration.py
 cd /opt/netbox
 ./upgrade.sh
 pip install -r requirement.txt
-systemctl restart netbox netbox-rq
-
 
 # Création du super utilisateur
 echo "Création du super utilisateur"
@@ -188,6 +186,8 @@ systemctl enable netbox netbox-rq
 echo ""
 systemctl status netbox.service
 sleep 5
+
+systemctl restart netbox netbox-rq
 
 deactivate
 
