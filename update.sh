@@ -14,6 +14,9 @@ echo "Début de l'opération de mise à niveau de netbox"
 echo "Recherche et mise à jour du système et des paquets"
 apt update && apt upgrade -y
 
+# Vérifie la présence du paquet jq et l'installe.
+apt install -y jq
+
 # Indiquer version actuelle
 
 echo "Veuillez indiquer la version actuellement installé :"
